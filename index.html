@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>JARVIS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 中央にリアクター、左に会話ログ、右に予定と家電。狭い画面では縦一列。単一のダークHUDで固定。 */
+:root{
+  --bg:#05090f;
+  --panel:#0a1420;
+  --line:#16324a;
+  --fg:#d6eef8;
+  --dim:#6f8ea3;
+  --cyan:#6fe3ff;
+  --cyan-soft:rgba(111,227,255,.14);
+  --amber:#ffb547;
+  --red:#ff5f6d;
+  --green:#5fffb0;
+  --f-display:"Chakra Petch","Zen Kaku Gothic New",system-ui,sans-serif;
+  --f-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.7 var(--f-body);
+  background-image:radial-gradient(ellipse at 50% 30%,rgba(111,227,255,.08),transparent 60%),
+  linear-gradient(rgba(111,227,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(111,227,255,.035) 1px,transparent 1px);
+  background-size:100% 100%,32px 32px,32px 32px;}
+[hidden]{display:none!important}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+
+.wrap{max-width:1280px;margin:0 auto;padding-inline:16px;padding-block:16px 32px;display:flex;flex-direction:column;gap:16px;min-height:100%}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:10px}
+.brand{font-family:var(--f-display);letter-spacing:.35em;font-size:1.25rem;color:var(--cyan);font-weight:600}
+.brand small{display:block;letter-spacing:.2em;font-size:.68rem;color:var(--dim);font-weight:400}
+.status{display:flex;gap:8px;flex-wrap:wrap;font-family:var(--f-mono);font-size:.72rem}
+.chip{border:1px solid var(--line);padding:3px 9px;color:var(--dim);letter-spacing:.06em}
+.chip.on{color:var(--green);border-color:rgba(95,255,176,.45)}
+.chip.warn{color:var(--amber);border-color:rgba(255,181,71,.45)}
+.chip.off{color:var(--red);border-color:rgba(255,95,109,.4)}
+.fsbtn{background:transparent;cursor:pointer;color:var(--cyan);border-color:var(--cyan)}
+.fsbtn:hover{background:var(--cyan-soft)}
+:fullscreen .wrap{max-width:none;min-height:100vh}
+:fullscreen .log{max-height:68vh}
+:fullscreen .reactor{max-width:520px}
+
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:1000px){.grid{grid-template-columns:minmax(0,1fr)}.core{order:-1}}
+
+.panel{background:linear-gradient(180deg,rgba(10,20,32,.92),rgba(5,9,15,.92));border:1px solid var(--line);position:relative;min-width:0}
+.panel::before,.panel::after{content:"";position:absolute;width:12px;height:12px;border-color:var(--cyan);border-style:solid;opacity:.7}
+.panel::before{top:-1px;left:-1px;border-width:2px 0 0 2px}
+.panel::after{bottom:-1px;right:-1px;border-width:0 2px 2px 0}
+.ph{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);font-family:var(--f-display);letter-spacing:.18em;font-size:.78rem;color:var(--cyan)}
+.ph span:last-child{font-family:var(--f-mono);letter-spacing:.04em;color:var(--dim);font-size:.68rem}
+.pb{padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+
+/* core */
+.core{display:flex;flex-direction:column;align-items:center;gap:14px}
+.reactor{position:relative;width:100%;max-width:440px;aspect-ratio:1}
+.reactor canvas{width:100%;height:100%;display:block}
+.state{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;text-align:center}
+.state b{font-family:var(--f-display);letter-spacing:.3em;font-size:1rem;color:var(--cyan);font-weight:600}
+.state i{font-style:normal;font-size:.8rem;color:var(--dim);margin-top:4px}
+.live{min-height:3.4em;width:100%;text-align:center;font-size:1.05rem;color:var(--fg);text-wrap:balance}
+.live .interim{color:var(--dim)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.btn{background:var(--cyan-soft);border:1px solid var(--cyan);color:var(--cyan);padding:9px 18px;cursor:pointer;font-family:var(--f-display);letter-spacing:.12em;font-size:.85rem;transition:background .2s}
+.btn:hover{background:rgba(111,227,255,.26)}
+.btn.ghost{background:transparent;border-color:var(--line);color:var(--dim)}
+.btn.ghost:hover{color:var(--fg);border-color:var(--dim)}
+.btn:disabled{opacity:.4;cursor:default}
+form.say{display:flex;gap:8px;width:100%}
+form.say input{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);padding:9px 12px;color:var(--fg)}
+form.say input::placeholder{color:var(--dim)}
+
+/* log */
+.log{max-height:58vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:4px}
+.msg{display:flex;flex-direction:column;gap:2px}
+.msg .who{font-family:var(--f-mono);font-size:.68rem;letter-spacing:.08em;color:var(--dim)}
+.msg.j .who{color:var(--cyan)}
+.msg .txt{white-space:pre-wrap;overflow-wrap:anywhere}
+.msg.u .txt{color:var(--fg)}
+.msg.j .txt{color:#bfefff}
+.msg.sys .txt{color:var(--amber);font-size:.85rem}
+.detail{border-left:2px solid var(--cyan);padding:6px 10px;background:rgba(111,227,255,.05);font-size:.9rem;white-space:pre-wrap;overflow-wrap:anywhere}
+.empty{color:var(--dim);font-size:.85rem}
+
+/* schedule & devices */
+.ev{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)}
+.ev:last-child{border-bottom:0}
+.ev time{font-family:var(--f-mono);font-size:.78rem;color:var(--cyan);font-variant-numeric:tabular-nums;line-height:1.3}
+.ev .t{overflow-wrap:anywhere}
+.x{background:none;border:0;color:var(--dim);cursor:pointer;font-size:1rem;padding:2px 6px}
+.x:hover{color:var(--red)}
+.devs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.dev{border:1px solid var(--line);padding:10px;cursor:pointer;background:transparent;text-align:left;display:flex;flex-direction:column;gap:2px;transition:border-color .2s,background .2s}
+.dev .n{font-size:.88rem}
+.dev .v{font-family:var(--f-mono);font-size:.74rem;color:var(--dim);font-variant-numeric:tabular-nums}
+.dev.on{border-color:var(--cyan);background:var(--cyan-soft)}
+.dev.on .v{color:var(--cyan)}
+.note{font-size:.75rem;color:var(--dim)}
+
+/* settings */
+details.settings summary{cursor:pointer;list-style:none;font-family:var(--f-display);letter-spacing:.18em;font-size:.78rem;color:var(--cyan);padding:10px 14px}
+details.settings summary::-webkit-details-marker{display:none}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;padding:4px 14px 14px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:.75rem;color:var(--dim);letter-spacing:.04em}
+.field input[type=password],.field input[type=text],.field select{background:var(--panel);border:1px solid var(--line);padding:7px 10px;color:var(--fg);min-width:0}
+.field input[type=range]{accent-color:var(--cyan)}
+.check{display:flex;gap:8px;align-items:center;font-size:.88rem}
+.meter{height:8px;background:var(--panel);border:1px solid var(--line);position:relative;overflow:hidden}
+.meter i{position:absolute;inset:0 auto 0 0;width:0;background:var(--cyan);transition:width .05s}
+.meter b{position:absolute;top:0;bottom:0;width:2px;background:var(--amber)}
+
+/* boot overlay */
+.boot{position:fixed;inset:0;background:rgba(5,9,15,.94);display:flex;align-items:center;justify-content:center;z-index:10;padding:16px}
+.boot-in{max-width:480px;text-align:center;display:flex;flex-direction:column;gap:16px;align-items:center}
+.boot h1{font-family:var(--f-display);letter-spacing:.5em;color:var(--cyan);font-weight:600;margin:0;font-size:2rem;padding-left:.5em}
+.boot p{margin:0;color:var(--dim);font-size:.9rem}
+.boot .btn{font-size:1rem;padding:12px 28px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="boot" id="boot">
+  <div class="boot-in">
+    <h1>JARVIS</h1>
+    <p>Just A Rather Very Intelligent System<br>マイクの使用を許可すると、手拍子2回か「ジャービス」の声で起動します。</p>
+    <button class="btn" id="bootBtn" type="button">システム起動</button>
+    <p class="note" id="bootNote">Google Chrome でお使いください。</p>
+  </div>
+</div>
+
+<div class="wrap">
+  <header>
+    <div class="brand">J.A.R.V.I.S.<small>PERSONAL ASSISTANT · PROTOTYPE v0.4</small></div>
+    <div class="status">
+      <span class="chip" id="stMic">MIC —</span>
+      <span class="chip" id="stClap">CLAP —</span>
+      <span class="chip" id="stWake">VOICE —</span>
+      <span class="chip" id="stBrain">BRAIN —</span>
+      <span class="chip" id="stCal">CAL —</span>
+      <button class="chip fsbtn" id="fsBtn" type="button" title="全画面（Fキー）">⛶ 全画面</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="panel">
+      <div class="ph"><span>会話ログ</span><span id="clock">--:--</span></div>
+      <div class="pb"><div class="log" id="log"><p class="empty">「ジャービス」と呼ぶか、手拍子を2回どうぞ。</p></div></div>
+    </section>
+
+    <section class="core">
+      <div class="reactor"><canvas id="rc"></canvas>
+        <div class="state"><b id="stateLabel">STANDBY</b><i id="stateSub">待機中</i></div>
+      </div>
+      <div class="live" id="live"></div>
+      <div class="actions">
+        <button class="btn" id="wakeBtn" type="button">呼び出す</button>
+        <button class="btn ghost" id="muteBtn" type="button">マイク一時停止</button>
+      </div>
+      <form class="say" id="sayForm" autocomplete="off">
+        <input id="sayInput" type="text" placeholder="文字でも指示できます（例：明日10時に打ち合わせ）">
+        <button class="btn" type="submit">送信</button>
+      </form>
+    </section>
+
+    <section style="display:flex;flex-direction:column;gap:16px;min-width:0">
+      <div class="panel">
+        <div class="ph"><span>予定</span><span id="schedSrc">SIMULATION</span></div>
+        <div class="pb" id="sched"></div>
+      </div>
+      <div class="panel">
+        <div class="ph"><span>家電</span><span>SIMULATION</span></div>
+        <div class="pb"><div class="devs" id="devs"></div>
+        <p class="note">今は画面上の模擬操作です。SwitchBot導入後に本物の家電とつなぎます。</p></div>
+      </div>
+    </section>
+  </div>
+
+  <details class="panel settings" id="settings">
+    <summary>設定 · SETTINGS</summary>
+    <div class="fields">
+      <div class="field">
+        <label for="apiKey">Claude APIキー（このパソコンのブラウザ内にだけ保存）</label>
+        <input id="apiKey" type="password" placeholder="sk-ant-...">
+        <span class="note">未入力でも、時刻・予定・家電の簡単な指示は動きます。</span>
+      </div>
+      <div class="field">
+        <label for="model">頭脳モデル</label>
+        <select id="model">
+          <option value="claude-haiku-4-5-20251001">Haiku 4.5（速い・安い）</option>
+          <option value="claude-sonnet-5-5">Sonnet 5.5（賢い）</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="voice">声</label>
+        <select id="voice"></select>
+      </div>
+      <div class="field">
+        <span class="check"><input type="checkbox" id="useClap" checked><label for="useClap">手拍子2回で起動</label></span>
+        <span class="check"><input type="checkbox" id="useWake" checked><label for="useWake">「ジャービス」の声で起動</label></span>
+      </div>
+      <div class="field">
+        <label for="sens">手拍子の感度（右ほど反応しやすい）</label>
+        <input id="sens" type="range" min="1" max="10" value="5">
+        <div class="meter" title="入力レベル"><i id="lvl"></i><b id="thr"></b></div>
+        <span class="note" id="clapInfo">手を叩くとバーが黄色の線を超えれば検知します。</span>
+      </div>
+      <div class="field">
+        <label for="calUrl">Googleカレンダー連携URL（Apps Scriptのウェブアプリ）</label>
+        <input id="calUrl" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+        <label for="calSecret">合言葉（Apps Scriptに書いたものと同じ）</label>
+        <input id="calSecret" type="password">
+        <button class="btn ghost" id="calTest" type="button">接続テスト</button>
+        <span class="note" id="calInfo">未設定の間は、予定は画面上だけで管理されます。</span>
+      </div>
+      <div class="field">
+        <label>データ</label>
+        <button class="btn ghost" id="resetBtn" type="button">予定・家電・会話をリセット</button>
+      </div>
+    </div>
+  </details>
+</div>
+
+<script>
+(() => {
+"use strict";
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem("jarvis."+k); return v==null ? d : JSON.parse(v); }catch{ return d; } },
+  set(k, v){ try{ localStorage.setItem("jarvis."+k, JSON.stringify(v)); }catch{} }
+};
+
+/* ---------- state ---------- */
+const DEFAULT_DEVICES = [
+  {id:"light", name:"リビング照明", on:false, value:null, unit:""},
+  {id:"aircon", name:"エアコン", on:false, value:26, unit:"℃"},
+  {id:"tv", name:"テレビ", on:false, value:null, unit:""},
+  {id:"curtain", name:"カーテン", on:false, value:null, unit:"", onLabel:"開", offLabel:"閉"}
+];
+let events = store.get("events", []);
+let devices = store.get("devices", DEFAULT_DEVICES);
+let history = [];
+let mode = "idle"; // idle | awake | thinking | speaking
+let systemOn = false, micPaused = false;
+let awakeTimer = null, ignoreUntil = 0;
+
+/* ---------- UI helpers ---------- */
+const logEl = $("log");
+function addLog(kind, text, detail){
+  const empty = logEl.querySelector(".empty"); if (empty) empty.remove();
+  const d = document.createElement("div"); d.className = "msg " + kind;
+  const who = document.createElement("span"); who.className = "who";
+  const t = new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"});
+  who.textContent = (kind==="u" ? "YOU" : kind==="j" ? "JARVIS" : "SYSTEM") + " · " + t;
+  const tx = document.createElement("span"); tx.className = "txt"; tx.textContent = text;
+  d.append(who, tx);
+  if (detail){ const dd = document.createElement("div"); dd.className="detail"; dd.textContent = detail; d.append(dd); }
+  logEl.append(d); logEl.scrollTop = logEl.scrollHeight;
+}
+function setMode(m, sub){
+  mode = m;
+  const L = {idle:["STANDBY","待機中"], awake:["LISTENING","お話しください"], thinking:["PROCESSING","考えています"], speaking:["RESPONDING","応答中"]};
+  $("stateLabel").textContent = L[m][0];
+  $("stateSub").textContent = sub || L[m][1];
+}
+function chip(id, text, cls){ const c=$(id); c.textContent=text; c.className="chip "+(cls||""); }
+function setLive(final, interim){
+  const el = $("live"); el.textContent = "";
+  if (final) el.append(final);
+  if (interim){ const s=document.createElement("span"); s.className="interim"; s.textContent=interim; el.append(s); }
+}
+
+/* ---------- schedule & devices ---------- */
+const pad = n => String(n).padStart(2,"0");
+const ymd = d => d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
+function fmtDate(s){
+  const today = ymd(new Date()), tm = ymd(new Date(Date.now()+864e5));
+  if (s===today) return "今日";
+  if (s===tm) return "明日";
+  const d = new Date(s+"T00:00"); return (d.getMonth()+1)+"/"+d.getDate()+"("+"日月火水木金土"[d.getDay()]+")";
+}
+function renderSched(){
+  const el = $("sched"); el.textContent = "";
+  const today = ymd(new Date());
+  events = events.filter(e => e.date >= today).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
+  if (!calOn()) store.set("events", events);
+  if (!events.length){ const p=document.createElement("p"); p.className="empty"; p.textContent="予定はありません。「明日10時に打ち合わせ入れて」のように頼むと追加されます。"; el.append(p); return; }
+  for (const e of events){
+    const r = document.createElement("div"); r.className="ev";
+    const t = document.createElement("time"); t.innerHTML = ""; t.append(fmtDate(e.date), document.createElement("br"), e.time || "終日");
+    const n = document.createElement("span"); n.className="t"; n.textContent = e.title;
+    const x = document.createElement("button"); x.className="x"; x.type="button"; x.title="削除"; x.textContent="×";
+    x.onclick = async () => {
+      if (calOn()){
+        x.disabled = true;
+        try { await calApi({action:"remove", id:e.id}); await syncCalendar(); }
+        catch (err){ x.disabled = false; addLog("sys","カレンダーから削除できませんでした：" + err.message); }
+      } else { events = events.filter(v=>v.id!==e.id); renderSched(); }
+    };
+    r.append(t,n,x); el.append(r);
+  }
+}
+function devLabel(d){
+  if (d.onLabel) return d.on ? d.onLabel : d.offLabel;
+  if (!d.on) return "OFF";
+  return d.value!=null ? "ON · "+d.value+d.unit : "ON";
+}
+function renderDevs(){
+  const el=$("devs"); el.textContent=""; store.set("devices", devices);
+  for (const d of devices){
+    const b=document.createElement("button"); b.type="button"; b.className="dev"+(d.on?" on":"");
+    const n=document.createElement("span"); n.className="n"; n.textContent=d.name;
+    const v=document.createElement("span"); v.className="v"; v.textContent=devLabel(d);
+    b.append(n,v); b.onclick=()=>{ d.on=!d.on; renderDevs(); };
+    el.append(b);
+  }
+}
+function findDevice(name){
+  if (!name) return null;
+  const s = String(name);
+  return devices.find(d => d.id===s || d.name===s || d.name.includes(s) || s.includes(d.name.replace("リビング","")));
+}
+/* ---------- Google Calendar (Apps Script 経由) ---------- */
+function calOn(){ return !!($("calUrl").value.trim() && $("calSecret").value.trim()); }
+async function calApi(payload){
+  const res = await fetch($("calUrl").value.trim(), {
+    method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body: JSON.stringify(Object.assign({secret:$("calSecret").value.trim()}, payload))
+  });
+  if (!res.ok) throw new Error("通信エラー " + res.status);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error==="unauthorized" ? "合言葉が一致しません" : (data.error || "不明なエラー"));
+  return data;
+}
+async function syncCalendar(){
+  if (!calOn()){ chip("stCal","CAL 画面のみ","warn"); $("schedSrc").textContent="SIMULATION"; return false; }
+  try {
+    const data = await calApi({action:"list", days:14});
+    events = data.events;
+    renderSched();
+    chip("stCal","CAL GOOGLE","on"); $("schedSrc").textContent = "GOOGLE · " + new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"});
+    $("calInfo").textContent = "接続できています（今後14日分を表示）。";
+    return true;
+  } catch (err){
+    chip("stCal","CAL エラー","off"); $("calInfo").textContent = "接続できません：" + err.message;
+    return false;
+  }
+}
+setInterval(()=>{ if (calOn()) syncCalendar(); }, 5*60*1000);
+
+async function applyActions(actions){
+  const errors = [];
+  let calChanged = false;
+  for (const a of actions || []){
+    if (a.type==="calendar_add" && a.title && a.date){
+      if (calOn()){
+        try { await calApi({action:"add", title:a.title, date:a.date, time:a.time||"", duration:a.duration||60}); calChanged = true; }
+        catch (err){ errors.push("予定の登録に失敗：" + err.message); }
+      } else events.push({id:Math.random().toString(36).slice(2), title:a.title, date:a.date, time:a.time||""});
+    } else if (a.type==="calendar_remove"){
+      if (calOn()){
+        try { await calApi({action:"remove", id:a.id}); calChanged = true; }
+        catch (err){ errors.push("予定の削除に失敗：" + err.message); }
+      } else events = events.filter(e => e.id!==a.id && !(a.title && e.title.includes(a.title)));
+    } else if (a.type==="appliance"){
+      const d = findDevice(a.device); if (!d) continue;
+      if (a.power==="on") d.on = true; else if (a.power==="off") d.on = false;
+      if (a.value!=null && d.value!=null){ d.value = Number(a.value); d.on = true; }
+    }
+  }
+  if (calChanged) await syncCalendar();
+  renderSched(); renderDevs();
+  return errors;
+}
+
+/* ---------- voice out ---------- */
+let voices = [];
+function loadVoices(){
+  voices = speechSynthesis.getVoices().filter(v => v.lang && v.lang.startsWith("ja"));
+  const sel = $("voice"); const saved = store.get("voice", "");
+  sel.textContent = "";
+  for (const v of voices){ const o=document.createElement("option"); o.value=v.name; o.textContent=v.name; sel.append(o); }
+  if (!voices.length){ const o=document.createElement("option"); o.textContent="日本語の声が見つかりません"; sel.append(o); }
+  const pref = voices.find(v=>v.name===saved) || voices.find(v=>/Otoya|Google 日本語|Ichiro|Keita/.test(v.name)) || voices[0];
+  if (pref) sel.value = pref.name;
+}
+if ("speechSynthesis" in window){ loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+$("voice").onchange = e => store.set("voice", e.target.value);
+
+function speak(text){
+  return new Promise(res => {
+    if (!("speechSynthesis" in window) || !text){ res(); return; }
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ja-JP"; u.rate = 1.08; u.pitch = 0.9;
+    const v = voices.find(v=>v.name===$("voice").value); if (v) u.voice = v;
+    ignoreUntil = Infinity;
+    const done = () => { ignoreUntil = Date.now()+600; res(); };
+    u.onend = done; u.onerror = done;
+    speechSynthesis.speak(u);
+  });
+}
+
+/* ---------- sound fx ---------- */
+let actx = null;
+function chime(){
+  if (!actx) return;
+  const t = actx.currentTime;
+  [880, 1318.5].forEach((f,i)=>{
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type="sine"; o.frequency.value=f;
+    g.gain.setValueAtTime(0,t+i*.09); g.gain.linearRampToValueAtTime(.12,t+i*.09+.02); g.gain.exponentialRampToValueAtTime(.0001,t+i*.09+.35);
+    o.connect(g).connect(actx.destination); o.start(t+i*.09); o.stop(t+i*.09+.4);
+  });
+}
+
+/* ---------- clap detection ---------- */
+let level = 0, baseRms = 0.01, lastOnset = 0, lastClap = null, pending = [];
+let ticks = [], lastTick = 0, lastKey = 0;
+document.addEventListener("keydown", () => { lastKey = performance.now(); }, true);
+// 指定区間に、手拍子以外の物音がいくつあったか
+function ticksBetween(a, b, except){
+  return ticks.filter(t => t > a && t <= b && !except.some(x => Math.abs(t - x) < 70)).length;
+}
+// 感度 1→0.85（鈍い） / 5→0.58（標準） / 10→0.25（敏感）
+function sensThreshold(){ return 0.917 - Number($("sens").value)*0.0667; }
+function onAudio(buf, now){
+  let peak=0, sum=0;
+  for (let i=0;i<buf.length;i++){ const v=buf[i]; const a=v<0?-v:v; if(a>peak)peak=a; sum+=v*v; }
+  const rms = Math.sqrt(sum/buf.length);
+  level = Math.max(peak, level*0.85);
+  // 直後の音が短く消えるか（手拍子）、続くか（声・物音）を判定
+  for (const c of pending){ if (now - c.t < 200){ c.frames++; if (rms > c.rms*0.3) c.loud++; } }
+  const ready = pending.filter(c => now - c.t >= 200);
+  pending = pending.filter(c => now - c.t < 200);
+  for (const c of ready){
+    if (c.loud / Math.max(1,c.frames) <= 0.25) clapConfirmed(c);
+  }
+  // 小さな「カチッ」も含めて、すべての短い物音を記録（タイピング判定用）
+  if (peak > Math.max(0.06, baseRms*6) && now - lastTick > 40){ lastTick = now; ticks.push(now); }
+  ticks = ticks.filter(t => now - t < 2500);
+  // 立ち上がりの鋭い大きな音だけを候補にする
+  if (peak > sensThreshold() && rms > baseRms*9 && rms > sensThreshold()*0.12 && peak/Math.max(rms,1e-4) > 2.2 && now - lastOnset > 120){
+    lastOnset = now; pending.push({t:now, rms, peak, frames:0, loud:0});
+  } else if (now - lastOnset > 300){
+    baseRms = baseRms*0.99 + rms*0.01;
+  }
+}
+function clapConfirmed(c){
+  if (!$("useClap").checked || micPaused || mode!=="idle" || Date.now() < ignoreUntil) return;
+  const prev = lastClap;
+  const gap = prev ? c.t - prev.t : Infinity;
+  const similar = prev && Math.max(c.peak, prev.peak) / Math.min(c.peak, prev.peak) < 2.5;
+  if (gap > 180 && gap < 700 && similar){
+    lastClap = null;
+    const t1 = prev.t, t2 = c.t;
+    // このページでキーを打った直後は無視
+    if (t2 - lastKey < 1500){ $("clapInfo").textContent = "キー入力中のため無視しました"; return; }
+    // 手拍子の前0.6秒に別の物音があれば、タイピングなどの連続音とみなす
+    if (ticksBetween(t1 - 600, t1 - 70, [t1, t2]) > 0 || ticksBetween(t1, t2, [t1, t2]) > 0){
+      $("clapInfo").textContent = "連続した物音のため無視しました（タイピングなど）"; return;
+    }
+    // 手拍子の後0.45秒も静かかを確認してから起動
+    setTimeout(() => {
+      if (ticksBetween(t2 + 70, t2 + 450, [t2]) > 0){ $("clapInfo").textContent = "連続した物音のため無視しました（タイピングなど）"; return; }
+      if (mode!=="idle") return;
+      $("clapInfo").textContent = "手拍子2回を検知しました（" + new Date().toLocaleTimeString("ja-JP") + "）";
+      wake("clap");
+    }, 260);
+  } else {
+    lastClap = c;
+    $("clapInfo").textContent = "手拍子1回を検知（もう1回で起動）";
+  }
+}
+
+/* ---------- speech recognition ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, recRunning = false;
+const WAKE = /(ジャ[ーア]?[ビヴベバ]ィ?[スズ]|じゃ[ーあ]?[びゔべ]す|jarvis)/i;
+function startRec(){
+  if (!SR || recRunning || micPaused || !systemOn) return;
+  try { rec.start(); recRunning = true; } catch {}
+}
+function setupRec(){
+  if (!SR){ chip("stWake","VOICE 非対応","off"); return; }
+  rec = new SR(); rec.lang = "ja-JP"; rec.continuous = true; rec.interimResults = true;
+  rec.onresult = e => {
+    if (Date.now() < ignoreUntil) return;
+    let interim = "", finals = [];
+    for (let i=e.resultIndex;i<e.results.length;i++){
+      const r = e.results[i]; const t = r[0].transcript.trim();
+      if (r.isFinal) finals.push(t); else interim += t;
+    }
+    if (mode==="awake") setLive("", interim);
+    else if (mode==="idle" && WAKE.test(interim) && $("useWake").checked) setLive("", interim);
+    for (const t of finals) handleFinal(t);
+  };
+  rec.onerror = e => {
+    if (e.error==="not-allowed" || e.error==="service-not-allowed"){ chip("stWake","VOICE 拒否","off"); addLog("sys","音声認識が許可されていません。アドレスバーのマイク設定を確認してください。"); }
+  };
+  rec.onend = () => { recRunning = false; if (systemOn && !micPaused) setTimeout(startRec, 250); };
+  chip("stWake","VOICE ON","on");
+}
+function handleFinal(t){
+  if (!t) return;
+  if (mode==="awake"){ setLive(t); command(t); return; }
+  if (mode!=="idle" || !$("useWake").checked) return;
+  const m = t.match(WAKE);
+  if (!m) return;
+  const rest = t.slice(m.index + m[0].length).replace(/^[、。,\s]+/,"").trim();
+  if (rest.length >= 3){ chime(); setLive(rest); command(rest); }
+  else wake("voice");
+}
+
+/* ---------- flow ---------- */
+async function wake(src){
+  if (mode!=="idle") return;
+  clearTimeout(awakeTimer);
+  chime(); setMode("speaking");
+  addLog("j","お呼びですか");
+  await speak("お呼びですか");
+  listenForCommand();
+}
+function listenForCommand(){
+  setMode("awake"); setLive("", "");
+  clearTimeout(awakeTimer);
+  awakeTimer = setTimeout(()=>{ if (mode==="awake"){ setMode("idle"); setLive(""); } }, 9000);
+}
+async function command(text){
+  clearTimeout(awakeTimer);
+  addLog("u", text);
+  setMode("thinking");
+  let r;
+  try { r = await think(text); }
+  catch (err){ r = {speech:"申し訳ありません、頭脳との通信に失敗しました。", display:String(err.message||err), actions:[]}; }
+  const errs = await applyActions(r.actions);
+  if (errs.length){
+    r.speech = "申し訳ありません、カレンダーへの反映に失敗しました。";
+    r.display = errs.join("\n");
+  }
+  addLog("j", r.speech || "", r.display || "");
+  setMode("speaking");
+  await speak(r.speech);
+  setLive("");
+  if (r.follow_up) listenForCommand(); else setMode("idle");
+}
+
+/* ---------- brain ---------- */
+function contextText(){
+  const now = new Date();
+  const dow = "日月火水木金土"[now.getDay()];
+  return "現在日時: " + ymd(now) + "(" + dow + ") " + pad(now.getHours())+":"+pad(now.getMinutes()) + "\n" +
+    "登録済みの予定: " + (events.length ? JSON.stringify(events) : "なし") + "\n" +
+    "家電の状態: " + JSON.stringify(devices.map(d=>({id:d.id,name:d.name,on:d.on,value:d.value})));
+}
+const SYSTEM = `あなたは映画アイアンマンのJ.A.R.V.I.S.のような、落ち着いた有能な執事型AIアシスタントです。日本語で、丁寧かつ簡潔に話します。
+主な仕事は予定管理と家電操作、そして調べ物や相談への回答です。
+必ず次のJSONだけを出力してください。前後に文章やコードブロックを付けないこと。
+{"speech":"読み上げる短い返事(1〜2文、60字以内)","display":"画面に表示する詳細(不要なら空文字。長い説明・一覧・調べ物の中身はここへ)","actions":[],"follow_up":false}
+actionsに入れられる操作:
+- {"type":"calendar_add","title":"件名","date":"YYYY-MM-DD","time":"HH:MM","duration":分数} 時刻不明ならtimeは空文字、durationは指定がなければ60
+- {"type":"calendar_remove","id":"予定のid"} idは「登録済みの予定」にあるものをそのまま使う
+- {"type":"appliance","device":"light|aircon|tv|curtain","power":"on|off","value":数値(エアコン温度のみ)}
+ルール: 日付は現在日時から正しく計算する。長い内容はspeechで要点だけ言い、詳細はdisplayへ。聞き返しが必要なときはfollow_upをtrueにする。`;
+
+async function think(text){
+  const key = $("apiKey").value.trim();
+  if (!key) return localBrain(text);
+  history.push({role:"user", content: contextText() + "\n\nユーザーの発言: " + text});
+  history = history.slice(-12);
+  if (history[0].role !== "user") history.shift();
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST",
+    headers:{"content-type":"application/json","x-api-key":key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body: JSON.stringify({model:$("model").value, max_tokens:1500, system:SYSTEM, messages:history})
+  });
+  if (!res.ok){
+    history.pop();
+    const body = await res.text();
+    if (res.status===401) throw new Error("APIキーが正しくありません。設定を確認してください。");
+    throw new Error("API エラー " + res.status + ": " + body.slice(0,200));
+  }
+  const data = await res.json();
+  const raw = (data.content||[]).filter(c=>c.type==="text").map(c=>c.text).join("");
+  history.push({role:"assistant", content: raw});
+  chip("stBrain","BRAIN CLAUDE","on");
+  const s = raw.indexOf("{"), e = raw.lastIndexOf("}");
+  try { return JSON.parse(raw.slice(s, e+1)); }
+  catch { return {speech: raw.slice(0,80), display: raw, actions:[]}; }
+}
+
+/* 簡易ローカル頭脳（APIキーなしでも動く範囲） */
+function toNum(s){ const z="０１２３４５６７８９"; return Number(String(s).replace(/[０-９]/g,c=>z.indexOf(c))); }
+function localBrain(t){
+  const now = new Date();
+  if (/何時|時間/.test(t) && !/入れ|予定|登録/.test(t))
+    return {speech:"現在、" + now.getHours() + "時" + now.getMinutes() + "分です。", display:"", actions:[]};
+  if (/今日.*(何日|日付)|何日/.test(t))
+    return {speech:"今日は" + (now.getMonth()+1) + "月" + now.getDate() + "日、" + "日月火水木金土"[now.getDay()] + "曜日です。", display:"", actions:[]};
+  // device
+  const dev = /エアコン|冷房|暖房/.test(t) ? "aircon" : /照明|電気|ライト|明かり/.test(t) ? "light" : /テレビ/.test(t) ? "tv" : /カーテン/.test(t) ? "curtain" : null;
+  if (dev){
+    const d = findDevice(dev);
+    const temp = t.match(/([0-9０-９]{2})\s*度/);
+    if (temp && dev==="aircon"){ const v=toNum(temp[1]); return {speech:"エアコンを"+v+"度に設定しました。", display:"", actions:[{type:"appliance",device:dev,power:"on",value:v}]}; }
+    const off = /消|切|オフ|止|閉/.test(t), on = /つけ|付け|入れ|オン|開|起動/.test(t);
+    if (off || on){
+      const p = off ? "off" : "on";
+      const verb = dev==="curtain" ? (p==="on"?"開けました":"閉めました") : (p==="on"?"つけました":"消しました");
+      return {speech: d.name + "を" + verb + "。", display:"", actions:[{type:"appliance",device:dev,power:p}]};
+    }
+  }
+  // schedule add: 「明日10時に打ち合わせ入れて」
+  if (/入れ|登録|追加|予定/.test(t) && /(今日|明日|明後日|あさって|\d+月\d+日|[0-9０-９]+時)/.test(t) && !/教え|何|ある/.test(t)){
+    let d = new Date();
+    if (/明後日|あさって/.test(t)) d = new Date(Date.now()+2*864e5);
+    else if (/明日/.test(t)) d = new Date(Date.now()+864e5);
+    const md = t.match(/([0-9０-９]+)月([0-9０-９]+)日/);
+    if (md){ d = new Date(now.getFullYear(), toNum(md[1])-1, toNum(md[2])); if (d < new Date(ymd(now))) d.setFullYear(d.getFullYear()+1); }
+    const hm = t.match(/(午後)?([0-9０-９]+)時(半|([0-9０-９]+)分)?/);
+    let time = "";
+    if (hm){ let h=toNum(hm[2]); if (hm[1] && h<12) h+=12; const m = hm[3]==="半"?30:(hm[4]?toNum(hm[4]):0); time = pad(h)+":"+pad(m); }
+    let title = t.replace(/(今日|明日|明後日|あさって|[0-9０-９]+月[0-9０-９]+日|午後|[0-9０-９]+時(半|[0-9０-９]+分)?|から|に|の予定|予定|を?入れて(おいて|といて)?|を?登録して|を?追加して|ください|お願い|、|。)/g,"").trim() || "予定";
+    return {speech: fmtDate(ymd(d)) + (time?" "+time:"") + "に「" + title + "」を登録しました。", display:"", actions:[{type:"calendar_add",title,date:ymd(d),time}]};
+  }
+  if (/予定/.test(t)){
+    const target = /明日/.test(t) ? ymd(new Date(Date.now()+864e5)) : ymd(now);
+    const list = events.filter(e=>e.date===target);
+    const label = /明日/.test(t) ? "明日" : "今日";
+    if (!list.length) return {speech: label + "の予定はありません。", display:"", actions:[]};
+    return {speech: label + "の予定は" + list.length + "件です。画面に表示します。", display: list.map(e=>(e.time||"終日")+"  "+e.title).join("\n"), actions:[]};
+  }
+  if (/ありがと/.test(t)) return {speech:"どういたしまして。", display:"", actions:[]};
+  return {speech:"申し訳ありません、その指示はAPIキーを設定すると理解できるようになります。", display:"今はAPIキーなしの簡易モードです。対応できるのは、時刻・日付、予定の追加と確認、家電のオンオフとエアコンの温度設定です。\n調べ物や自由な会話は、設定からClaude APIキーを入れると使えます。", actions:[]};
+}
+
+/* ---------- reactor animation ---------- */
+const cv = $("rc"), cx = cv.getContext("2d");
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function sizeCanvas(){ const r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio||1); cv.width = r.width*dpr; cv.height = r.height*dpr; }
+addEventListener("resize", sizeCanvas); sizeCanvas();
+let ph = 0;
+function draw(){
+  const w = cv.width, h = cv.height, c = w/2, R = w*0.46;
+  cx.clearRect(0,0,w,h);
+  const col = mode==="thinking" ? "255,181,71" : "111,227,255";
+  const energy = mode==="idle" ? 0.25 : mode==="awake" ? 0.6 + level*2 : 0.8;
+  ph += reduce ? 0 : (mode==="thinking" ? 0.04 : 0.012);
+  cx.save(); cx.translate(c,c);
+  // outer ticks
+  for (let i=0;i<120;i++){
+    const a = i/120*Math.PI*2 + ph*0.3, long = i%10===0;
+    cx.strokeStyle = `rgba(${col},${long?0.7:0.25})`; cx.lineWidth = w*0.003;
+    cx.beginPath(); cx.moveTo(Math.cos(a)*R, Math.sin(a)*R); cx.lineTo(Math.cos(a)*(R-(long?R*0.07:R*0.035)), Math.sin(a)*(R-(long?R*0.07:R*0.035))); cx.stroke();
+  }
+  // rotating arcs
+  const arcs = [[0.82,0.55,1],[0.72,0.3,-1.6],[0.62,0.8,0.8]];
+  arcs.forEach(([rr,len,sp],k)=>{
+    cx.strokeStyle = `rgba(${col},${0.35+0.25*energy})`; cx.lineWidth = w*(0.008 - k*0.0015);
+    for (let j=0;j<3;j++){ const s = ph*sp + j*Math.PI*2/3; cx.beginPath(); cx.arc(0,0,R*rr,s,s+len*Math.PI*2/3); cx.stroke(); }
+  });
+  // segments ring
+  for (let i=0;i<10;i++){
+    const a = i/10*Math.PI*2 - ph*0.5;
+    cx.fillStyle = `rgba(${col},${0.18+0.3*energy})`;
+    cx.beginPath(); cx.arc(0,0,R*0.5,a,a+0.42); cx.arc(0,0,R*0.42,a+0.42,a,true); cx.closePath(); cx.fill();
+  }
+  // core glow
+  const pulse = 0.85 + 0.15*Math.sin(ph*4) + (mode==="awake" ? level*1.5 : 0);
+  const g = cx.createRadialGradient(0,0,0,0,0,R*0.38*pulse);
+  g.addColorStop(0,`rgba(235,252,255,${0.55+0.4*energy})`); g.addColorStop(0.35,`rgba(${col},${0.35+0.3*energy})`); g.addColorStop(1,`rgba(${col},0)`);
+  cx.fillStyle = g; cx.beginPath(); cx.arc(0,0,R*0.4*pulse,0,Math.PI*2); cx.fill();
+  cx.restore();
+  // level meter in settings
+  $("lvl").style.width = Math.min(100, level*100) + "%";
+  $("thr").style.left = (sensThreshold()*100) + "%";
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+setInterval(()=>{ $("clock").textContent = new Date().toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }, 1000);
+
+/* ---------- boot ---------- */
+async function boot(){
+  $("bootBtn").disabled = true; $("bootNote").textContent = "マイクの使用を許可してください…";
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    const stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
+    const src = actx.createMediaStreamSource(stream);
+    const sp = actx.createScriptProcessor(512, 1, 1);
+    sp.onaudioprocess = e => onAudio(e.inputBuffer.getChannelData(0), performance.now());
+    const mute = actx.createGain(); mute.gain.value = 0;
+    src.connect(sp); sp.connect(mute); mute.connect(actx.destination);
+    chip("stMic","MIC ON","on"); chip("stClap","CLAP ON","on");
+  } catch (err){
+    chip("stMic","MIC 拒否","off"); chip("stClap","CLAP OFF","off");
+    addLog("sys","マイクが使えません（" + (err.name||err) + "）。文字入力と「呼び出す」ボタンは使えます。");
+  }
+  systemOn = true;
+  setupRec(); startRec();
+  syncCalendar();
+  chip("stBrain", $("apiKey").value.trim() ? "BRAIN CLAUDE" : "BRAIN 簡易", $("apiKey").value.trim() ? "on" : "warn");
+  $("boot").hidden = true;
+  setMode("speaking", "起動中");
+  chime();
+  await speak("システム、オンライン。お呼びの際は手を2回叩くか、ジャービスとお声がけください。");
+  setMode("idle");
+}
+$("bootBtn").onclick = boot;
+
+/* ---------- controls ---------- */
+$("wakeBtn").onclick = () => { if (mode==="idle") wake("button"); };
+function toggleFullscreen(){
+  if (document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+  else document.documentElement.requestFullscreen().catch(()=>{});
+}
+$("fsBtn").onclick = toggleFullscreen;
+document.addEventListener("fullscreenchange", () => {
+  $("fsBtn").textContent = document.fullscreenElement ? "⛶ 全画面解除" : "⛶ 全画面";
+});
+document.addEventListener("keydown", e => {
+  if ((e.key==="f" || e.key==="F") && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) toggleFullscreen();
+});
+$("muteBtn").onclick = () => {
+  micPaused = !micPaused;
+  $("muteBtn").textContent = micPaused ? "マイク再開" : "マイク一時停止";
+  if (micPaused){ try{ rec && rec.stop(); }catch{} chip("stWake","VOICE 停止","warn"); chip("stClap","CLAP 停止","warn"); }
+  else { startRec(); chip("stWake","VOICE ON","on"); chip("stClap","CLAP ON","on"); }
+};
+$("sayForm").addEventListener("submit", e => {
+  e.preventDefault(); const v = $("sayInput").value.trim(); if (!v) return;
+  $("sayInput").value = ""; if (mode==="speaking") speechSynthesis.cancel();
+  command(v);
+});
+$("apiKey").value = store.get("apiKey", "");
+$("apiKey").addEventListener("change", e => {
+  store.set("apiKey", e.target.value.trim()); history = [];
+  if (systemOn) chip("stBrain", e.target.value.trim() ? "BRAIN CLAUDE" : "BRAIN 簡易", e.target.value.trim() ? "on" : "warn");
+});
+$("calUrl").value = store.get("calUrl", "");
+$("calSecret").value = store.get("calSecret", "");
+for (const id of ["calUrl","calSecret"]){
+  $(id).addEventListener("change", e => { store.set(id, e.target.value.trim()); if (!calOn()) { events = store.get("events", []); renderSched(); } syncCalendar(); });
+}
+$("calTest").onclick = async () => {
+  $("calInfo").textContent = "接続を確認しています…";
+  store.set("calUrl", $("calUrl").value.trim()); store.set("calSecret", $("calSecret").value.trim());
+  const ok = await syncCalendar();
+  if (ok) addLog("sys", "Googleカレンダーに接続しました。今後14日分の予定を表示しています。");
+};
+$("model").value = store.get("model", "claude-haiku-4-5-20251001");
+$("model").onchange = e => store.set("model", e.target.value);
+for (const id of ["useClap","useWake"]){ $(id).checked = store.get(id, true); $(id).onchange = e => store.set(id, e.target.checked); }
+$("sens").value = store.get("sens", 5); $("sens").oninput = e => store.set("sens", Number(e.target.value));
+$("resetBtn").onclick = () => { events=[]; devices=JSON.parse(JSON.stringify(DEFAULT_DEVICES)); history=[]; logEl.textContent=""; renderSched(); renderDevs(); addLog("sys","リセットしました。"); };
+
+renderSched(); renderDevs();
+})();
+</script>
+</body>
+</html>
