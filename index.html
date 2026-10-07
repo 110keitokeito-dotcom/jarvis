@@ -141,7 +141,7 @@ details.settings summary::-webkit-details-marker{display:none}
 
 <div class="wrap">
   <header>
-    <div class="brand">J.A.R.V.I.S.<small>PERSONAL ASSISTANT · PROTOTYPE v0.5</small></div>
+    <div class="brand">J.A.R.V.I.S.<small>PERSONAL ASSISTANT · PROTOTYPE v0.6</small></div>
     <div class="status">
       <span class="chip" id="stMic">MIC —</span>
       <span class="chip" id="stClap">CLAP —</span>
@@ -208,6 +208,17 @@ details.settings summary::-webkit-details-marker{display:none}
       <div class="field">
         <span class="check"><input type="checkbox" id="useClap" checked><label for="useClap">手拍子2回で起動</label></span>
         <span class="check"><input type="checkbox" id="useWake" checked><label for="useWake">「ジャービス」の声で起動</label></span>
+        <span class="check"><input type="checkbox" id="useConv" checked><label for="useConv">返事のあとも会話を続ける</label></span>
+      </div>
+      <div class="field">
+        <label for="waitSec">黙ってから待機に戻るまで</label>
+        <select id="waitSec">
+          <option value="10">10秒</option>
+          <option value="20">20秒</option>
+          <option value="30">30秒</option>
+          <option value="60">60秒</option>
+        </select>
+        <span class="note">「ありがとう」「以上」「もういいよ」で、すぐ待機に戻ります。</span>
       </div>
       <div class="field">
         <label for="sens">手拍子の感度（右ほど反応しやすい）</label>
@@ -507,7 +518,7 @@ function setupRec(){
       const r = e.results[i]; const t = r[0].transcript.trim();
       if (r.isFinal) finals.push(t); else interim += t;
     }
-    if (mode==="awake") setLive("", interim);
+    if (mode==="awake"){ setLive("", interim); if (interim) armAwake(); }
     else if (mode==="idle" && WAKE.test(interim) && $("useWake").checked) setLive("", interim);
     for (const t of finals) handleFinal(t);
   };
@@ -519,7 +530,11 @@ function setupRec(){
 }
 function handleFinal(t){
   if (!t) return;
-  if (mode==="awake"){ setLive(t); command(t); return; }
+  if (mode==="awake"){
+    const cmd = t.replace(WAKE, "").replace(/^[、。,\s]+/, "").trim();
+    if (!cmd) { armAwake(); return; }
+    setLive(cmd); command(cmd); return;
+  }
   if (mode!=="idle" || !$("useWake").checked) return;
   const m = t.match(WAKE);
   if (!m) return;
@@ -537,14 +552,36 @@ async function wake(src){
   await speak("お呼びですか");
   listenForCommand();
 }
+// 話している間はタイマーを延長し、黙ってから設定秒数たったら待機へ
+let awakeDeadline = 0, countdown = null;
+function armAwake(){
+  const sec = Number($("waitSec").value) || 20;
+  awakeDeadline = Date.now() + sec*1000;
+  clearTimeout(awakeTimer);
+  awakeTimer = setTimeout(()=>{
+    if (mode==="awake"){ setMode("idle"); setLive(""); addLog("sys","待機に戻りました。"); }
+  }, sec*1000);
+}
 function listenForCommand(){
   setMode("awake"); setLive("", "");
-  clearTimeout(awakeTimer);
-  awakeTimer = setTimeout(()=>{ if (mode==="awake"){ setMode("idle"); setLive(""); } }, 9000);
+  armAwake();
+  clearInterval(countdown);
+  countdown = setInterval(()=>{
+    if (mode!=="awake"){ clearInterval(countdown); return; }
+    const left = Math.max(0, Math.ceil((awakeDeadline - Date.now())/1000));
+    $("stateSub").textContent = "お話しください · あと" + left + "秒";
+  }, 250);
 }
+const END_WORDS = /^(ありがと|以上|もういい|大丈夫|おやすみ|終わり|おわり|下がって|サンキュー)/;
 async function command(text){
   clearTimeout(awakeTimer);
   addLog("u", text);
+  if (END_WORDS.test(text) && text.length <= 12){
+    const bye = /おやすみ/.test(text) ? "おやすみなさいませ。" : "承知しました。また何かあればお呼びください。";
+    addLog("j", bye); setMode("speaking");
+    await speak(bye); setLive(""); setMode("idle");
+    return;
+  }
   setMode("thinking");
   let r;
   try { r = await think(text); }
@@ -558,7 +595,7 @@ async function command(text){
   setMode("speaking");
   await speak(r.speech);
   setLive("");
-  if (r.follow_up) listenForCommand(); else setMode("idle");
+  if (r.follow_up || $("useConv").checked) listenForCommand(); else setMode("idle");
 }
 
 /* ---------- brain ---------- */
@@ -765,7 +802,9 @@ $("calTest").onclick = async () => {
 };
 $("model").value = store.get("model", "claude-haiku-4-5-20251001");
 $("model").onchange = e => store.set("model", e.target.value);
-for (const id of ["useClap","useWake"]){ $(id).checked = store.get(id, true); $(id).onchange = e => store.set(id, e.target.checked); }
+for (const id of ["useClap","useWake","useConv"]){ $(id).checked = store.get(id, true); $(id).onchange = e => store.set(id, e.target.checked); }
+$("waitSec").value = String(store.get("waitSec", 20));
+$("waitSec").onchange = e => { store.set("waitSec", Number(e.target.value)); if (mode==="awake") armAwake(); };
 $("sens").value = store.get("sens", 5); $("sens").oninput = e => store.set("sens", Number(e.target.value));
 $("resetBtn").onclick = () => { events=[]; devices=JSON.parse(JSON.stringify(DEFAULT_DEVICES)); history=[]; logEl.textContent=""; renderSched(); renderDevs(); addLog("sys","リセットしました。"); };
 
