@@ -141,7 +141,7 @@ details.settings summary::-webkit-details-marker{display:none}
 
 <div class="wrap">
   <header>
-    <div class="brand">J.A.R.V.I.S.<small>PERSONAL ASSISTANT · PROTOTYPE v0.4</small></div>
+    <div class="brand">J.A.R.V.I.S.<small>PERSONAL ASSISTANT · PROTOTYPE v0.5</small></div>
     <div class="status">
       <span class="chip" id="stMic">MIC —</span>
       <span class="chip" id="stClap">CLAP —</span>
@@ -426,11 +426,14 @@ function chime(){
 
 /* ---------- clap detection ---------- */
 let level = 0, baseRms = 0.01, lastOnset = 0, lastClap = null, pending = [];
-let ticks = [], lastTick = 0, lastKey = 0;
+let ticks = [], lastTick = 0, lastKey = 0, prevPeak = 0;
 document.addEventListener("keydown", () => { lastKey = performance.now(); }, true);
-// 指定区間に、手拍子以外の物音がいくつあったか
-function ticksBetween(a, b, except){
-  return ticks.filter(t => t > a && t <= b && !except.some(x => Math.abs(t - x) < 70)).length;
+// 指定区間に、手拍子以外の「新しい」物音がいくつあったか
+// 手拍子の直前30ms〜直後180msは、その手拍子自身の音と残響なので数えない
+// 手拍子の35%未満の小さな音（残響・空調など）も数えない
+function ticksBetween(a, b, except, minPeak){
+  return ticks.filter(k => k.t > a && k.t <= b && k.peak >= minPeak &&
+    !except.some(x => k.t > x - 30 && k.t < x + 180)).length;
 }
 // 感度 1→0.85（鈍い） / 5→0.58（標準） / 10→0.25（敏感）
 function sensThreshold(){ return 0.917 - Number($("sens").value)*0.0667; }
@@ -447,8 +450,10 @@ function onAudio(buf, now){
     if (c.loud / Math.max(1,c.frames) <= 0.25) clapConfirmed(c);
   }
   // 小さな「カチッ」も含めて、すべての短い物音を記録（タイピング判定用）
-  if (peak > Math.max(0.06, baseRms*6) && now - lastTick > 40){ lastTick = now; ticks.push(now); }
-  ticks = ticks.filter(t => now - t < 2500);
+  // 直前より急に大きくなった音だけを「新しい物音」とする（残響の減衰は数えない）
+  if (peak > Math.max(0.06, baseRms*6) && peak > prevPeak*1.8 && now - lastTick > 40){ lastTick = now; ticks.push({t:now, peak}); }
+  prevPeak = peak;
+  ticks = ticks.filter(k => now - k.t < 2500);
   // 立ち上がりの鋭い大きな音だけを候補にする
   if (peak > sensThreshold() && rms > baseRms*9 && rms > sensThreshold()*0.12 && peak/Math.max(rms,1e-4) > 2.2 && now - lastOnset > 120){
     lastOnset = now; pending.push({t:now, rms, peak, frames:0, loud:0});
@@ -466,13 +471,14 @@ function clapConfirmed(c){
     const t1 = prev.t, t2 = c.t;
     // このページでキーを打った直後は無視
     if (t2 - lastKey < 1500){ $("clapInfo").textContent = "キー入力中のため無視しました"; return; }
-    // 手拍子の前0.6秒に別の物音があれば、タイピングなどの連続音とみなす
-    if (ticksBetween(t1 - 600, t1 - 70, [t1, t2]) > 0 || ticksBetween(t1, t2, [t1, t2]) > 0){
+    const minPk = Math.min(prev.peak, c.peak) * 0.35;
+    // 手拍子の前0.4秒や2回の間に別の物音があれば、タイピングなどの連続音とみなす
+    if (ticksBetween(t1 - 400, t2, [t1, t2], minPk) > 0){
       $("clapInfo").textContent = "連続した物音のため無視しました（タイピングなど）"; return;
     }
-    // 手拍子の後0.45秒も静かかを確認してから起動
+    // 手拍子の後0.35秒も静かかを確認してから起動
     setTimeout(() => {
-      if (ticksBetween(t2 + 70, t2 + 450, [t2]) > 0){ $("clapInfo").textContent = "連続した物音のため無視しました（タイピングなど）"; return; }
+      if (ticksBetween(t2, t2 + 350, [t2], minPk) > 0){ $("clapInfo").textContent = "連続した物音のため無視しました（タイピングなど）"; return; }
       if (mode!=="idle") return;
       $("clapInfo").textContent = "手拍子2回を検知しました（" + new Date().toLocaleTimeString("ja-JP") + "）";
       wake("clap");
